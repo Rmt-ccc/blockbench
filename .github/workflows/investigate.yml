@@ -31,3 +31,27 @@ jobs:
 
       - name: Search for isApp usage in build config
         run: grep -rn "isApp" build.js || echo "build.js not found or no matches"
+
+      - name: Build web version
+        run: npm run build-web
+
+      - name: Show output directory structure
+        run: |
+          echo "----- Top level after build -----"
+          ls -la
+          echo "----- dist/ (if exists) -----"
+          ls -la dist/ 2>/dev/null || echo "no dist/ folder"
+          echo "----- js/ (if exists) -----"
+          ls -la js/ 2>/dev/null || echo "no js/ folder"
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: |
+            dist/
+            index.html
+            css/
+            font/
+            assets/
+          if-no-files-found: warn
