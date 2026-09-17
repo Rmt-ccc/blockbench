@@ -5,6 +5,9 @@ on:
     branches: [ next ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -74,3 +77,62 @@ jobs:
           name: blockbench-mobile-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Locate APK and compute hash
+        id: apkinfo
+        run: |
+          APK_PATH=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "APK not found" >&2
+            exit 1
+          fi
+          SHA256=$(sha256sum "$APK_PATH" | cut -d ' ' -f 1)
+          echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Scan APK with VirusTotal
+        id: virustotal
+        env:
+          VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+        run: |
+          curl -sS --request POST \
+            --url https://www.virustotal.com/api/v3/files \
+            --header "x-apikey: $VIRUSTOTAL_API_KEY" \
+            --form "file=@${{ steps.apkinfo.outputs.path }}" \
+            -o vt_response.json
+
+          cat vt_response.json
+          VT_URL="https://www.virustotal.com/gui/file/${{ steps.apkinfo.outputs.sha256 }}"
+          echo "report_url=$VT_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK to appetize.io
+        id: appetize
+        env:
+          APPETIZE_API_KEY: ${{ secrets.APPETIZE_API_KEY }}
+        run: |
+          curl -sS -u "$APPETIZE_API_KEY:" \
+            -F "platform=android" \
+            -F "file=@${{ steps.apkinfo.outputs.path }}" \
+            https://api.appetize.io/v1/apps \
+            -o appetize_response.json
+
+          cat appetize_response.json
+          PUBLIC_URL=$(jq -r '.publicURL' appetize_response.json)
+          echo "public_url=$PUBLIC_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Write summary
+        run: |
+          {
+            echo "### Blockbench Mobile - Build Results"
+            echo ""
+            echo "- APK SHA256: \`${{ steps.apkinfo.outputs.sha256 }}\`"
+            echo "- VirusTotal report: ${{ steps.virustotal.outputs.report_url }}"
+            echo "- appetize.io preview: ${{ steps.appetize.outputs.public_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Blockbench Mobile build #${{ github.run_number }}"
+          body: |
