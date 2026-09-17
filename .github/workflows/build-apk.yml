@@ -1,0 +1,71 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ next ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: next
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build web version
+        run: npm run build-web
+
+      - name: Copy web build into Android assets
+        run: |
+          rm -rf android/app/src/main/assets/www
+          mkdir -p android/app/src/main/assets/www
+          cp -r dist android/app/src/main/assets/www/
+          rm -f android/app/src/main/assets/www/dist/bundle.js.map
+          cp index.html android/app/src/main/assets/www/
+          cp -r css android/app/src/main/assets/www/
+          cp -r assets android/app/src/main/assets/www/
+          cp -r font android/app/src/main/assets/www/
+          cp -r lib android/app/src/main/assets/www/
+          cp -r lang android/app/src/main/assets/www/
+          cp -r keymaps android/app/src/main/assets/www/
+          cp -r themes android/app/src/main/assets/www/
+          cp -r icons android/app/src/main/assets/www/
+          cp manifest.webmanifest android/app/src/main/assets/www/
+          cp favicon.png icon.png icon_full.png icon_maskable.png android/app/src/main/assets/www/
+          echo "----- www/ contents -----"
+          find android/app/src/main/assets/www -maxdepth 2
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Generate Gradle wrapper
+        working-directory: android
+        run: gradle wrapper --gradle-version 8.7
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: blockbench-mobile-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
