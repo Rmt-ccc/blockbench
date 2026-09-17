@@ -1,0 +1,2 @@
+rootProject.name = "BlockbenchMobile"
+include ':app'
