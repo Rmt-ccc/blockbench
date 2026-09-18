@@ -28,26 +28,48 @@ jobs:
 
       - name: Copy web build into Android assets
         run: |
-          rm -rf android/app/src/main/assets/www
-          mkdir -p android/app/src/main/assets/www
-          cp -r dist android/app/src/main/assets/www/
-          rm -f android/app/src/main/assets/www/dist/bundle.js.map
-          cp index.html android/app/src/main/assets/www/
-          cp -r css android/app/src/main/assets/www/
-          cp -r assets android/app/src/main/assets/www/
-          cp -r font android/app/src/main/assets/www/
-          cp -r lib android/app/src/main/assets/www/
-          cp -r lang android/app/src/main/assets/www/
-          cp -r keymaps android/app/src/main/assets/www/
-          cp -r themes android/app/src/main/assets/www/
-          cp -r icons android/app/src/main/assets/www/
-          cp manifest.webmanifest android/app/src/main/assets/www/
-          cp favicon.png icon.png icon_full.png icon_maskable.png android/app/src/main/assets/www/
+          rm -rf Android/app/src/main/assets/www
+          mkdir -p Android/app/src/main/assets/www
+          cp -r dist Android/app/src/main/assets/www/
+          rm -f Android/app/src/main/assets/www/dist/bundle.js.map
+          cp index.html Android/app/src/main/assets/www/
+          cp -r css Android/app/src/main/assets/www/
+          cp -r assets Android/app/src/main/assets/www/
+          cp -r font Android/app/src/main/assets/www/
+          cp -r lib Android/app/src/main/assets/www/
+          cp -r lang Android/app/src/main/assets/www/
+          cp -r keymaps Android/app/src/main/assets/www/
+          cp -r themes Android/app/src/main/assets/www/
+          cp -r icons Android/app/src/main/assets/www/
+          cp manifest.webmanifest Android/app/src/main/assets/www/
+          cp favicon.png icon.png icon_full.png icon_maskable.png Android/app/src/main/assets/www/
           echo "----- www/ contents -----"
-          find android/app/src/main/assets/www -maxdepth 2
+          find Android/app/src/main/assets/www -maxdepth 2
 
-      - name: Show android/ directory structure
-        run: find android -maxdepth 4
+      - name: Prepare app icon (legacy + adaptive)
+        run: |
+          mkdir -p Android/app/src/main/res/mipmap-mdpi
+          mkdir -p Android/app/src/main/res/mipmap-hdpi
+          mkdir -p Android/app/src/main/res/mipmap-xhdpi
+          mkdir -p Android/app/src/main/res/mipmap-xxhdpi
+          mkdir -p Android/app/src/main/res/mipmap-xxxhdpi
+
+          # legacy square icon (pre-Android 8 devices)
+          convert icon_full.png -resize 48x48   Android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          convert icon_full.png -resize 72x72   Android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+          convert icon_full.png -resize 96x96   Android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          convert icon_full.png -resize 144x144 Android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          convert icon_full.png -resize 192x192 Android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          # adaptive icon foreground layer (Android 8+, round/squircle/etc. handled by the OS)
+          convert icon_maskable.png -resize 108x108 Android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png
+          convert icon_maskable.png -resize 162x162 Android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png
+          convert icon_maskable.png -resize 216x216 Android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png
+          convert icon_maskable.png -resize 324x324 Android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png
+          convert icon_maskable.png -resize 432x432 Android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+
+          echo "----- mipmap contents -----"
+          find Android/app/src/main/res -maxdepth 2
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -64,25 +86,25 @@ jobs:
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Generate Gradle wrapper
-        working-directory: android
+        working-directory: Android
         run: gradle wrapper --gradle-version 8.7
 
       - name: Build debug APK
-        working-directory: android
+        working-directory: Android
         run: ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: blockbench-mobile-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: Android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
       - name: Upload to Appetize.io
         env:
           APPETIZE_API_KEY: ${{ secrets.APPETIZE_API_KEY }}
         run: |
-          APK_PATH=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n1)
+          APK_PATH=$(find Android/app/build/outputs/apk/debug -name "*.apk" | head -n1)
           RESPONSE=$(curl --silent --request POST \
             --url "https://api.appetize.io/v1/apps" \
             --header "X-API-KEY: $APPETIZE_API_KEY" \
@@ -114,7 +136,7 @@ jobs:
         env:
           VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
         run: |
-          APK_PATH=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n1)
+          APK_PATH=$(find Android/app/build/outputs/apk/debug -name "*.apk" | head -n1)
           SHA256=$(sha256sum "$APK_PATH" | awk '{print $1}')
           echo "Uploading $APK_PATH (sha256: $SHA256) to VirusTotal..."
 
@@ -151,7 +173,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          APK_PATH=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n1)
+          APK_PATH=$(find Android/app/build/outputs/apk/debug -name "*.apk" | head -n1)
           TAG_NAME="build-${{ github.run_number }}"
           {
             echo "Automated debug build from commit ${{ github.sha }}."
