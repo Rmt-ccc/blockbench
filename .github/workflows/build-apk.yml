@@ -77,3 +77,117 @@ jobs:
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install required SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Generate Gradle wrapper
+        working-directory: Android
+        run: gradle wrapper --gradle-version 8.7
+
+      - name: Build debug APK
+        working-directory: Android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: blockbench-mobile-debug-apk
+          path: Android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload to Appetize.io
+        env:
+          APPETIZE_API_KEY: ${{ secrets.APPETIZE_API_KEY }}
+        run: |
+          APK_PATH=$(find Android/app/build/outputs/apk/debug -name "*.apk" | head -n1)
+          RESPONSE=$(curl --silent --request POST \
+            --url "https://api.appetize.io/v1/apps" \
+            --header "X-API-KEY: $APPETIZE_API_KEY" \
+            --form "file=@$APK_PATH" \
+            --form "platform=android")
+          echo "$RESPONSE"
+          PUBLIC_KEY=$(echo "$RESPONSE" | grep -o '"publicKey":"[^"]*"' | head -n1 | cut -d'"' -f4)
+          if [ -n "$PUBLIC_KEY" ]; then
+            APPETIZE_URL="https://appetize.io/app/$PUBLIC_KEY"
+          else
+            APPETIZE_URL=""
+          fi
+          {
+            echo "## Appetize.io preview"
+            if [ -n "$PUBLIC_KEY" ]; then
+              echo "Tap below to launch this exact build in an Android emulator, right in your browser:"
+              echo ""
+              echo "$APPETIZE_URL"
+            else
+              echo "Upload to Appetize.io did not return a public key. Raw response:"
+              echo '```'
+              echo "$RESPONSE"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "APPETIZE_URL=$APPETIZE_URL" >> "$GITHUB_ENV"
+
+      - name: Scan APK with VirusTotal
+        env:
+          VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+        run: |
+          APK_PATH=$(find Android/app/build/outputs/apk/debug -name "*.apk" | head -n1)
+          SHA256=$(sha256sum "$APK_PATH" | awk '{print $1}')
+          echo "Uploading $APK_PATH (sha256: $SHA256) to VirusTotal..."
+
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            HTTP_STATUS=$(curl --silent --output vt_response.json --write-out "%{http_code}" \
+              --request POST \
+              --url https://www.virustotal.com/api/v3/files \
+              --header "x-apikey: $VIRUSTOTAL_API_KEY" \
+              --form file=@"$APK_PATH")
+
+            if [ "$HTTP_STATUS" = "429" ]; then
+              echo "VirusTotal rate limit hit (attempt $ATTEMPT/$MAX_ATTEMPTS). Waiting 65 seconds before retrying..."
+              sleep 65
+              ATTEMPT=$((ATTEMPT + 1))
+              continue
+            fi
+
+            break
+          done
+
+          cat vt_response.json
+          {
+            echo "## VirusTotal scan"
+            echo "SHA256: \`$SHA256\`"
+            echo ""
+            echo "Report (scanning may take a minute or two to finish): https://www.virustotal.com/gui/file/$SHA256"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "VT_SHA256=$SHA256" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release with APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK_PATH=$(find Android/app/build/outputs/apk/debug -name "*.apk" | head -n1)
+          TAG_NAME="build-${{ github.run_number }}"
+          {
+            echo "Automated debug build from commit ${{ github.sha }}."
+            echo ""
+            echo "🔍 **VirusTotal scan:** https://www.virustotal.com/gui/file/$VT_SHA256"
+            if [ -n "$APPETIZE_URL" ]; then
+              echo "📱 **Appetize.io preview:** $APPETIZE_URL"
+            fi
+            echo ""
+            echo "⚠️ This is an unofficial, automatically generated build. Please verify the VirusTotal report before installing."
+          } > release_notes.md
+          gh release create "$TAG_NAME" "$APK_PATH" \
+            --title "Blockbench Mobile build #${{ github.run_number }}" \
+            --notes-file release_notes.md
